@@ -21,6 +21,56 @@ const { writeAnnouncement } = require("../ai/writeAnnouncement")
 const { checkAIUsageLimit, incrementAIUsage, getAIUsageStats } = require("../ai/aiUsageLimit")
 const { activatePremium, deactivatePremium, getPremiumInfo } = require("../storage/premiumStore")
 
+function isCreatorQuestion(text) {
+  const lowered = String(text || "").toLowerCase()
+
+  const patterns = [
+    "who created you",
+    "who made you",
+    "who built you",
+    "who developed you",
+    "who is your creator",
+    "who is your founder",
+    "who owns you",
+    "who invented you",
+    "who designed you",
+    "kurucun kim",
+    "seni kim yarattı",
+    "seni kim yaptı",
+    "seni kim geliştirdi",
+    "seni kim kurdu",
+    "seni kim üretti",
+    "yaratıcın kim",
+    "kurucusu kim",
+    "kimi tarafından yapıldın"
+  ]
+
+  return patterns.some(pattern => lowered.includes(pattern))
+}
+
+function getCreatorReply(text) {
+  const lowered = String(text || "").toLowerCase()
+
+  const turkishSignals = [
+    "kurucun kim",
+    "seni kim yarattı",
+    "seni kim yaptı",
+    "seni kim geliştirdi",
+    "seni kim kurdu",
+    "yaratıcın kim",
+    "kurucusu kim",
+    "kimi tarafından yapıldın"
+  ]
+
+  const shouldReplyTurkish = turkishSignals.some(pattern => lowered.includes(pattern))
+
+  if (shouldReplyTurkish) {
+    return "Ben Disogle'ım. Kurucum ve geliştiricim Miraç Başyiğit. Gelişmiş yapay zeka teknolojileri kullanıyorum ama beni yaratan kişi Miraç Başyiğit."
+  }
+
+  return "I am Disogle. I was created and developed by Miraç Başyiğit, founder of Disogle. I use advanced AI technology, but my creator is Miraç Başyiğit."
+}
+
 module.exports = {
   name: "messageCreate",
   async execute(message) {
@@ -169,6 +219,11 @@ module.exports = {
       }
 
       if (isAIChatChannel(message.guild.id, message.channel.id)) {
+        if (isCreatorQuestion(message.content)) {
+          await safeReply(message, getCreatorReply(message.content))
+          return
+        }
+
         const rate = checkAIRateLimit(message.guild.id, message.author.id, 8000)
 
         if (!rate.ok) {
