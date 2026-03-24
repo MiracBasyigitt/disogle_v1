@@ -1,4 +1,4 @@
-const { isPremiumGuild } = require("../storage/premiumStore")
+const { hasPremiumAccess } = require("../storage/premiumStore")
 
 const usageMap = new Map()
 
@@ -33,17 +33,26 @@ function getUserUsage(guildId, userId) {
   return entry
 }
 
-function getLimits(guildId) {
-  const premium = isPremiumGuild(guildId)
+function isPremium(guildId, userId) {
+  return hasPremiumAccess({
+    guildId: String(guildId),
+    userId: String(userId)
+  })
+}
+
+function getLimits(guildId, userId) {
+  const premium = isPremium(guildId, userId)
 
   if (premium) {
     return {
+      premium: true,
       chat: 300,
       utility: 100
     }
   }
 
   return {
+    premium: false,
     chat: 30,
     utility: 8
   }
@@ -51,7 +60,7 @@ function getLimits(guildId) {
 
 function checkAIUsageLimit(guildId, userId, type = "chat") {
   const entry = getUserUsage(guildId, userId)
-  const limits = getLimits(guildId)
+  const limits = getLimits(guildId, userId)
 
   const limit = type === "utility" ? limits.utility : limits.chat
   const current = type === "utility" ? entry.utilityCount : entry.chatCount
@@ -62,7 +71,7 @@ function checkAIUsageLimit(guildId, userId, type = "chat") {
       remaining: 0,
       used: current,
       limit,
-      premium: isPremiumGuild(guildId)
+      premium: limits.premium
     }
   }
 
@@ -71,7 +80,7 @@ function checkAIUsageLimit(guildId, userId, type = "chat") {
     remaining: limit - current,
     used: current,
     limit,
-    premium: isPremiumGuild(guildId)
+    premium: limits.premium
   }
 }
 
@@ -89,7 +98,7 @@ function incrementAIUsage(guildId, userId, type = "chat") {
 
 function getAIUsageStats(guildId, userId) {
   const entry = getUserUsage(guildId, userId)
-  const limits = getLimits(guildId)
+  const limits = getLimits(guildId, userId)
 
   return {
     day: entry.day,
@@ -97,7 +106,7 @@ function getAIUsageStats(guildId, userId) {
     utilityCount: entry.utilityCount,
     chatLimit: limits.chat,
     utilityLimit: limits.utility,
-    premium: isPremiumGuild(guildId)
+    premium: limits.premium
   }
 }
 

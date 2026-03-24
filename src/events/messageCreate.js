@@ -1,4 +1,3 @@
-const { activatePremium, deactivatePremium, getPremiumInfo, isPremiumGuild } = require("../storage/premiumStore")
 const { parseModerationCommand } = require("../core/commandParser")
 const { hasModerationAccess } = require("../moderation/permissions")
 const { muteMember } = require("../moderation/mute")
@@ -20,6 +19,7 @@ const { checkAIRateLimit } = require("../ai/aiRateLimit")
 const { summarizeRecentMessages } = require("../ai/summarizeMessages")
 const { writeAnnouncement } = require("../ai/writeAnnouncement")
 const { checkAIUsageLimit, incrementAIUsage, getAIUsageStats } = require("../ai/aiUsageLimit")
+const { activatePremium, deactivatePremium, getPremiumInfo } = require("../storage/premiumStore")
 
 module.exports = {
   name: "messageCreate",
@@ -33,61 +33,62 @@ module.exports = {
       const lowered = message.content.toLowerCase().trim()
 
       if (lowered === "disogle premium status") {
-      const info = getPremiumInfo(message.guild.id)
+        const info = getPremiumInfo(message.guild.id)
 
-      if (!info || !info.active) {
-      await safeReply(message, "This server is on the free plan.")
-      return
-      }
+        if (!info || !info.active) {
+          await safeReply(message, "This server is on the free plan.")
+          return
+        }
 
-      await safeReply(message, `This server is on the premium plan: ${info.plan}.`)
-      return
+        await safeReply(message, `This server is on the premium plan: ${info.plan}.`)
+        return
       }
 
       if (lowered.startsWith("disogle premium activate")) {
-      if (message.author.id !== process.env.OWNER_ID) {
-      await safeReply(message, "You are not allowed to use this command.")
-      return
+        if (String(message.author.id) !== String(process.env.OWNER_ID)) {
+          await safeReply(message, "You are not allowed to use this command.")
+          return
+        }
+
+        const parts = message.content.trim().split(/\s+/)
+        const guildId = parts[3] || message.guild.id
+
+        activatePremium(guildId, "pro")
+
+        await safeReply(message, `Premium activated for guild ${guildId}.`)
+        return
       }
 
-      const parts = message.content.trim().split(/\s+/)
-      const guildId = parts[3] || message.guild.id
+      if (lowered.startsWith("disogle premium deactivate")) {
+        if (String(message.author.id) !== String(process.env.OWNER_ID)) {
+          await safeReply(message, "You are not allowed to use this command.")
+          return
+        }
 
-      activatePremium(guildId, "pro")
+        const parts = message.content.trim().split(/\s+/)
+        const guildId = parts[3] || message.guild.id
 
-      await safeReply(message, `Premium activated for guild ${guildId}.`)
-      return
-     }
+        deactivatePremium(guildId)
 
-     if (lowered.startsWith("disogle premium deactivate")) {
-      if (message.author.id !== process.env.OWNER_ID) {
-        await safeReply(message, "You are not allowed to use this command.")
+        await safeReply(message, `Premium deactivated for guild ${guildId}.`)
         return
-       }
+      }
 
-       const parts = message.content.trim().split(/\s+/)
-       const guildId = parts[3] || message.guild.id
+      if (lowered === "disogle ai usage" || lowered === "disogle usage") {
+        const stats = getAIUsageStats(message.guild.id, message.author.id)
 
-       deactivatePremium(guildId)
-
-       await safeReply(message, `Premium deactivated for guild ${guildId}.`)
-       return
-     }
-     if (lowered === "disogle ai usage" || lowered === "disogle usage") {
-     const stats = getAIUsageStats(message.guild.id, message.author.id)
-
-     await safeReply(
-     message,
-     `Your AI usage today:
-     - Plan: ${stats.premium ? "Premium" : "Free"}
-     - Chat: ${stats.chatCount}/${stats.chatLimit}
-     - Utility: ${stats.utilityCount}/${stats.utilityLimit}`
-     )
-     return
-     }
+        await safeReply(
+          message,
+          `Your AI usage today:
+- Plan: ${stats.premium ? "Premium" : "Free"}
+- Chat: ${stats.chatCount}/${stats.chatLimit}
+- Utility: ${stats.utilityCount}/${stats.utilityLimit}`
+        )
+        return
+      }
 
       if (lowered.startsWith("disogle write an announcement")) {
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility", 8)
+        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility")
 
         if (!usage.ok) {
           await safeReply(message, "You reached your daily AI utility limit.")
@@ -117,7 +118,7 @@ module.exports = {
         lowered.includes("summarize last messages") ||
         lowered.startsWith("disogle summarize")
       ) {
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility", 8)
+        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility")
 
         if (!usage.ok) {
           await safeReply(message, "You reached your daily AI utility limit.")
@@ -174,7 +175,7 @@ module.exports = {
           return
         }
 
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "chat", 30)
+        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "chat")
 
         if (!usage.ok) {
           await safeReply(message, "You reached your daily AI chat limit.")

@@ -3,12 +3,15 @@ const path = require("path")
 
 const FILE_PATH = path.join(__dirname, "premium.json")
 
+function ensureFile() {
+  if (!fs.existsSync(FILE_PATH)) {
+    fs.writeFileSync(FILE_PATH, JSON.stringify({ guilds: [] }, null, 2))
+  }
+}
+
 function readPremiumFile() {
   try {
-    if (!fs.existsSync(FILE_PATH)) {
-      fs.writeFileSync(FILE_PATH, JSON.stringify({ guilds: [] }, null, 2))
-    }
-
+    ensureFile()
     const raw = fs.readFileSync(FILE_PATH, "utf8")
     const parsed = JSON.parse(raw)
 
@@ -23,17 +26,40 @@ function readPremiumFile() {
 }
 
 function writePremiumFile(data) {
+  ensureFile()
   fs.writeFileSync(FILE_PATH, JSON.stringify(data, null, 2))
 }
 
+function getEnvPremiumUsers() {
+  return String(process.env.PREMIUM_USERS || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function getEnvPremiumGuilds() {
+  return String(process.env.PREMIUM_GUILDS || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function isPremiumUser(userId) {
+  return getEnvPremiumUsers().includes(String(userId))
+}
+
 function isPremiumGuild(guildId) {
+  const envGuilds = getEnvPremiumGuilds()
+  if (envGuilds.includes(String(guildId))) return true
+
   const data = readPremiumFile()
-  return data.guilds.some(entry => entry.guildId === guildId && entry.active)
+  return data.guilds.some(entry => entry.guildId === String(guildId) && entry.active)
 }
 
 function activatePremium(guildId, plan = "pro") {
   const data = readPremiumFile()
-  const existing = data.guilds.find(entry => entry.guildId === guildId)
+  const normalizedGuildId = String(guildId)
+  const existing = data.guilds.find(entry => entry.guildId === normalizedGuildId)
 
   if (existing) {
     existing.active = true
@@ -41,7 +67,7 @@ function activatePremium(guildId, plan = "pro") {
     existing.updatedAt = Date.now()
   } else {
     data.guilds.push({
-      guildId,
+      guildId: normalizedGuildId,
       active: true,
       plan,
       createdAt: Date.now(),
@@ -55,7 +81,8 @@ function activatePremium(guildId, plan = "pro") {
 
 function deactivatePremium(guildId) {
   const data = readPremiumFile()
-  const existing = data.guilds.find(entry => entry.guildId === guildId)
+  const normalizedGuildId = String(guildId)
+  const existing = data.guilds.find(entry => entry.guildId === normalizedGuildId)
 
   if (!existing) return false
 
@@ -67,12 +94,28 @@ function deactivatePremium(guildId) {
 }
 
 function getPremiumInfo(guildId) {
+  const normalizedGuildId = String(guildId)
+
+  if (isPremiumGuild(normalizedGuildId)) {
+    return {
+      guildId: normalizedGuildId,
+      active: true,
+      plan: "pro"
+    }
+  }
+
   const data = readPremiumFile()
-  return data.guilds.find(entry => entry.guildId === guildId) || null
+  return data.guilds.find(entry => entry.guildId === normalizedGuildId) || null
+}
+
+function hasPremiumAccess({ guildId, userId }) {
+  return isPremiumGuild(guildId) || isPremiumUser(userId)
 }
 
 module.exports = {
+  isPremiumUser,
   isPremiumGuild,
+  hasPremiumAccess,
   activatePremium,
   deactivatePremium,
   getPremiumInfo
