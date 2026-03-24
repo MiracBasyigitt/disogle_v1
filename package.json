@@ -1,0 +1,16 @@
+{
+  "name": "disogle-v1",
+  "version": "1.0.0",
+  "description": "Disogle AI Discord Bot",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.5.0",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "openai": "^4.0.0",
+    "prisma": "^7.5.0"
+  }
+}
