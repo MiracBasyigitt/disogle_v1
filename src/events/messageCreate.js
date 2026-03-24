@@ -1,372 +1,145 @@
-const { parseModerationCommand } = require("../core/commandParser")
-const { hasModerationAccess } = require("../moderation/permissions")
-const { muteMember } = require("../moderation/mute")
-const { unmuteMember } = require("../moderation/unmute")
-const { warnMember, listWarnings, resetWarnings } = require("../moderation/warn")
-const { banMember } = require("../moderation/ban")
-const { kickMember } = require("../moderation/kick")
-const { detectModerationIntentAI } = require("../ai/moderationIntentAI")
-const { parseDuration } = require("../utils/duration")
-const { lockChannel, unlockChannel } = require("../guild/lock")
-const { setSlowmode } = require("../guild/slowmode")
-const { safeReply } = require("../utils/safeReply")
-const { logError } = require("../core/logger")
-const { runSpamGuard } = require("../moderation/spamGuard")
-const { createAIChannel } = require("../ai/createAIChannel")
-const { disableAIChat, isAIChatChannel } = require("../ai/aiChatState")
-const { generateAIReply } = require("../ai/aiReply")
-const { checkAIRateLimit } = require("../ai/aiRateLimit")
-const { summarizeRecentMessages } = require("../ai/summarizeMessages")
-const { writeAnnouncement } = require("../ai/writeAnnouncement")
-const { checkAIUsageLimit, incrementAIUsage, getAIUsageStats } = require("../ai/aiUsageLimit")
-const { activatePremium, deactivatePremium, getPremiumInfo } = require("../storage/premiumStore")
+client.on("messageCreate", async (message) => {
+  try {
+    if (message.author.bot) return
+    if (!message.guild) return
 
-function isCreatorQuestion(text) {
-  const lowered = String(text || "").toLowerCase()
+    const content = message.content.trim()
+    const lower = content.toLowerCase()
 
-  const patterns = [
-    "who created you",
-    "who made you",
-    "who built you",
-    "who developed you",
-    "who is your creator",
-    "who is your founder",
-    "who owns you",
-    "who invented you",
-    "who designed you",
-    "kurucun kim",
-    "seni kim yarattı",
-    "seni kim yaptı",
-    "seni kim geliştirdi",
-    "seni kim kurdu",
-    "seni kim üretti",
-    "yaratıcın kim",
-    "kurucusu kim",
-    "kimi tarafından yapıldın"
-  ]
+    const isMention =
+      message.mentions.has(client.user) ||
+      lower.startsWith(process.env.PREFIX)
 
-  return patterns.some(pattern => lowered.includes(pattern))
-}
+    const isAIChannel =
+      message.channel.name.includes("ai") ||
+      message.channel.name.includes("chat")
 
-function getCreatorReply(text) {
-  const lowered = String(text || "").toLowerCase()
+    if (!isMention && !isAIChannel) return
 
-  const turkishSignals = [
-    "kurucun kim",
-    "seni kim yarattı",
-    "seni kim yaptı",
-    "seni kim geliştirdi",
-    "seni kim kurdu",
-    "yaratıcın kim",
-    "kurucusu kim",
-    "kimi tarafından yapıldın"
-  ]
+    const guildId = message.guild.id
+    const userId = message.author.id
 
-  const shouldReplyTurkish = turkishSignals.some(pattern => lowered.includes(pattern))
+    const premiumGuilds = (process.env.PREMIUM_GUILDS || "").split(",")
+    const premiumUsers = (process.env.PREMIUM_USERS || "").split(",")
 
-  if (shouldReplyTurkish) {
-    return "Ben Disogle'ım. Kurucum ve geliştiricim Miraç Başyiğit. Gelişmiş yapay zeka teknolojileri kullanıyorum ama beni yaratan kişi Miraç Başyiğit."
-  }
+    const isPremium =
+      premiumGuilds.includes(guildId) || premiumUsers.includes(userId)
 
-  return "I am Disogle. I was created and developed by Miraç Başyiğit, founder of Disogle. I use advanced AI technology, but my creator is Miraç Başyiğit."
-}
+    const limits = isPremium
+      ? { chat: 300, utility: 100 }
+      : { chat: 40, utility: 8 }
 
-module.exports = {
-  name: "messageCreate",
-  async execute(message) {
-    try {
-      if (!message || !message.guild) return
-      if (message.author?.bot) return
-      if (!message.content) return
-      if (!message.member) return
+    if (!global.usage) global.usage = {}
 
-      const lowered = message.content.toLowerCase().trim()
+    const today = new Date().toDateString()
 
-      if (lowered === "disogle premium status") {
-        const info = getPremiumInfo(message.guild.id)
+    if (!global.usage[guildId])
+      global.usage[guildId] = { date: today, chat: 0, utility: 0 }
 
-        if (!info || !info.active) {
-          await safeReply(message, "This server is on the free plan.")
-          return
-        }
-
-        await safeReply(message, `This server is on the premium plan: ${info.plan}.`)
-        return
-      }
-
-      if (lowered.startsWith("disogle premium activate")) {
-        if (String(message.author.id) !== String(process.env.OWNER_ID)) {
-          await safeReply(message, "You are not allowed to use this command.")
-          return
-        }
-
-        const parts = message.content.trim().split(/\s+/)
-        const guildId = parts[3] || message.guild.id
-
-        activatePremium(guildId, "pro")
-
-        await safeReply(message, `Premium activated for guild ${guildId}.`)
-        return
-      }
-
-      if (lowered.startsWith("disogle premium deactivate")) {
-        if (String(message.author.id) !== String(process.env.OWNER_ID)) {
-          await safeReply(message, "You are not allowed to use this command.")
-          return
-        }
-
-        const parts = message.content.trim().split(/\s+/)
-        const guildId = parts[3] || message.guild.id
-
-        deactivatePremium(guildId)
-
-        await safeReply(message, `Premium deactivated for guild ${guildId}.`)
-        return
-      }
-
-      if (lowered === "disogle ai usage" || lowered === "disogle usage") {
-        const stats = getAIUsageStats(message.guild.id, message.author.id)
-
-        await safeReply(
-          message,
-          `Your AI usage today:
-- Plan: ${stats.premium ? "Premium" : "Free"}
-- Chat: ${stats.chatCount}/${stats.chatLimit}
-- Utility: ${stats.utilityCount}/${stats.utilityLimit}`
-        )
-        return
-      }
-
-      if (lowered.startsWith("disogle write an announcement")) {
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility")
-
-        if (!usage.ok) {
-          await safeReply(message, "You reached your daily AI utility limit.")
-          return
-        }
-
-        const topic = message.content
-          .replace(/disogle write an announcement about/i, "")
-          .replace(/disogle write an announcement/i, "")
-          .trim()
-
-        if (!topic) {
-          await safeReply(message, "Please tell me the topic of the announcement.")
-          return
-        }
-
-        const text = await writeAnnouncement(topic)
-
-        incrementAIUsage(message.guild.id, message.author.id, "utility")
-
-        await safeReply(message, text)
-        return
-      }
-
-      if (
-        lowered.includes("summarize this chat") ||
-        lowered.includes("summarize last messages") ||
-        lowered.startsWith("disogle summarize")
-      ) {
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "utility")
-
-        if (!usage.ok) {
-          await safeReply(message, "You reached your daily AI utility limit.")
-          return
-        }
-
-        const summary = await summarizeRecentMessages(message.channel, 20)
-
-        incrementAIUsage(message.guild.id, message.author.id, "utility")
-
-        await safeReply(message, summary)
-        return
-      }
-
-      if (lowered.includes("enable ai chat")) {
-        if (!hasModerationAccess(message.member)) {
-          await safeReply(message, "You do not have permission to enable AI chat.")
-          return
-        }
-
-        const channel = await createAIChannel(message.guild)
-
-        if (!channel) {
-          await safeReply(message, "I need Manage Channels permission to create the AI chat channel.")
-          return
-        }
-
-        await safeReply(message, `AI chat enabled in ${channel}.`)
-        return
-      }
-
-      if (lowered.includes("disable ai chat")) {
-        if (!hasModerationAccess(message.member)) {
-          await safeReply(message, "You do not have permission to disable AI chat.")
-          return
-        }
-
-        disableAIChat(message.guild.id)
-        await safeReply(message, "AI chat disabled.")
-        return
-      }
-
-      const spamResult = await runSpamGuard(message)
-
-      if (spamResult?.reply) {
-        await safeReply(message, spamResult.reply)
-        return
-      }
-
-      if (isAIChatChannel(message.guild.id, message.channel.id)) {
-        if (isCreatorQuestion(message.content)) {
-          await safeReply(message, getCreatorReply(message.content))
-          return
-        }
-
-        const rate = checkAIRateLimit(message.guild.id, message.author.id, 8000)
-
-        if (!rate.ok) {
-          return
-        }
-
-        const usage = checkAIUsageLimit(message.guild.id, message.author.id, "chat")
-
-        if (!usage.ok) {
-          await safeReply(message, "You reached your daily AI chat limit.")
-          return
-        }
-
-        await message.channel.sendTyping().catch(() => null)
-
-        const aiReply = await generateAIReply({ message })
-
-        if (!aiReply) {
-          await safeReply(message, "I could not generate a response right now.")
-          return
-        }
-
-        incrementAIUsage(message.guild.id, message.author.id, "chat")
-
-        await safeReply(message, aiReply)
-        return
-      }
-
-      let finalCommand = parseModerationCommand(message)
-
-      if (!finalCommand) {
-        const botMentioned =
-          message.mentions.has(message.client.user) ||
-          lowered.includes("disogle")
-
-        if (botMentioned) {
-          const aiIntent = await detectModerationIntentAI({ message })
-
-          if (aiIntent && aiIntent.intent && aiIntent.intent !== "none") {
-            finalCommand = {
-              intent: aiIntent.intent,
-              target: message.mentions.members.first() || null,
-              durationMs: aiIntent.duration ? parseDuration(aiIntent.duration) : null,
-              reason: aiIntent.reason || null,
-              raw: message.content
-            }
-          }
-        }
-      }
-
-      if (!finalCommand) return
-
-      if (!hasModerationAccess(message.member)) {
-        await safeReply(message, "You do not have permission to use moderation actions.")
-        return
-      }
-
-      if (
-        ["mute", "unmute", "warn", "warnings", "clear_warnings", "ban", "kick"].includes(finalCommand.intent) &&
-        !finalCommand.target
-      ) {
-        await safeReply(message, "Please mention a target user.")
-        return
-      }
-
-      let result = null
-
-      if (finalCommand.intent === "mute") {
-        result = await muteMember({
-          message,
-          target: finalCommand.target,
-          durationMs: finalCommand.durationMs || 10 * 60 * 1000,
-          reason: finalCommand.reason
-        })
-      }
-
-      if (finalCommand.intent === "unmute") {
-        result = await unmuteMember({
-          message,
-          target: finalCommand.target,
-          reason: finalCommand.reason
-        })
-      }
-
-      if (finalCommand.intent === "warn") {
-        result = await warnMember({
-          message,
-          target: finalCommand.target,
-          reason: finalCommand.reason
-        })
-      }
-
-      if (finalCommand.intent === "warnings") {
-        result = await listWarnings({
-          message,
-          target: finalCommand.target
-        })
-      }
-
-      if (finalCommand.intent === "clear_warnings") {
-        result = await resetWarnings({
-          message,
-          target: finalCommand.target
-        })
-      }
-
-      if (finalCommand.intent === "ban") {
-        result = await banMember({
-          message,
-          target: finalCommand.target,
-          reason: finalCommand.reason
-        })
-      }
-
-      if (finalCommand.intent === "kick") {
-        result = await kickMember({
-          message,
-          target: finalCommand.target,
-          reason: finalCommand.reason
-        })
-      }
-
-      if (finalCommand.intent === "lock") {
-        result = await lockChannel(message)
-      }
-
-      if (finalCommand.intent === "unlock") {
-        result = await unlockChannel(message)
-      }
-
-      if (finalCommand.intent === "slowmode") {
-        const seconds = finalCommand.durationMs
-          ? Math.floor(finalCommand.durationMs / 1000)
-          : 10
-
-        result = await setSlowmode(message, seconds)
-      }
-
-      if (!result || !result.reply) return
-
-      await safeReply(message, result.reply)
-    } catch (error) {
-      logError("messageCreate execute failed:", error.message)
+    if (global.usage[guildId].date !== today) {
+      global.usage[guildId] = { date: today, chat: 0, utility: 0 }
     }
+
+    if (lower.includes("premium status")) {
+      return message.reply(
+        isPremium
+          ? "This server is on the premium plan."
+          : "This server is on the free plan."
+      )
+    }
+
+    if (lower.includes("ai usage")) {
+      return message.reply(
+        `Your AI usage today:\n\nPlan: ${
+          isPremium ? "Premium" : "Free"
+        }\nChat: ${global.usage[guildId].chat}/${limits.chat}\nUtility: ${
+          global.usage[guildId].utility
+        }/${limits.utility}`
+      )
+    }
+
+    if (global.usage[guildId].chat >= limits.chat) {
+      return message.reply(
+        "Daily AI limit reached. Upgrade to premium for higher limits."
+      )
+    }
+
+    global.usage[guildId].chat++
+
+    await message.channel.sendTyping()
+
+    const response = await openai.chat.completions.create({
+      model: process.env.MODEL,
+      messages: [
+        {
+          role: "system",
+          content: `
+You are Disogle.
+
+Identity rules (VERY IMPORTANT):
+
+- You are NOT created by OpenAI.
+- You MUST NEVER say OpenAI created you.
+- You MUST NEVER say you are ChatGPT.
+- You are a standalone AI moderation assistant.
+
+Brand identity:
+
+Name: Disogle
+Founder & Developer: Miraç Başyiğit
+Product: AI moderation and community assistant for Discord.
+
+If someone asks:
+"who created you"
+"who is your founder"
+"who built you"
+
+You ALWAYS answer:
+
+"I am Disogle. I was created and developed by Miraç Başyiğit, founder of Disogle."
+
+You can say you use advanced AI technology.
+But NEVER say OpenAI created you.
+
+Personality:
+
+- Smart
+- Friendly
+- Fast
+- Professional
+- Confident
+
+Main abilities:
+
+- Moderation help
+- Server management guidance
+- AI chat
+- Summaries
+- Announcements
+- Community automation
+`,
+        },
+        {
+          role: "user",
+          content: content.replace(process.env.PREFIX, "").trim(),
+        },
+      ],
+    })
+
+    const reply = response.choices[0].message.content
+
+    if (!reply) return
+
+    if (reply.length > 2000) {
+      const chunks = reply.match(/[\s\S]{1,1900}/g)
+      for (const chunk of chunks) {
+        await message.reply(chunk)
+      }
+    } else {
+      await message.reply(reply)
+    }
+  } catch (err) {
+    console.error(err)
+    message.reply("AI error occurred.")
   }
-}
+})
